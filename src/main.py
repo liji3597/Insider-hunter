@@ -1,118 +1,169 @@
-from fastapi import FastAPI, Depends
+"""Insider Hunter - Polymarket 内幕猎手主入口"""
+import asyncio
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
 
-from .db import get_db, init_db
-from .models import Trade, Market, InsiderAlert
+from .config import get_settings
+from .db import init_db, close_db, AsyncSessionLocal
+from .api.routes import router
+from .indexer.discovery import MarketDiscovery
+from .indexer.listener import TradeListener
+from .indexer.backfill import HistoryBackfill
+from .profiler.analyzer import TraderProfiler
+from .agent.insider import InsiderAnalyzer
 
-app = FastAPI(title="Insider Hunter", description="Polymarket 内幕交易猎手")
+settings = get_settings()
 
-# 允许前端跨域调用
+# 全局服务实例
+listener: TradeListener = None
+discovery: MarketDiscovery = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    global listener, discovery
+
+    # 启动时
+    print("🚀 Insider Hunter 启动中...")
+
+    # 初始化数据库
+    await init_db()
+    print("✓ 数据库初始化完成")
+
+    # 初始化市场发现服务
+    discovery = MarketDiscovery()
+
+    # 同步市场数据
+    try:
+        markets = await discovery.fetch_all_active_markets(limit=200)
+        async with AsyncSessionLocal() as session:
+            count = await discovery.sync_markets_to_db(session, markets)
+            print(f"✓ 同步了 {count} 个新市场，共 {len(markets)} 个活跃市场")
+    except Exception as e:
+        print(f"⚠ 市场同步失败: {e}")
+
+    # 初始化链上监听器
+    listener = TradeListener(AsyncSessionLocal)
+
+    # 在后台启动监听器
+    asyncio.create_task(listener.start())
+    print("✓ 链上监听器已启动")
+
+    print("✓ Insider Hunter 启动完成!")
+    print(f"  API 地址: http://localhost:8000")
+    print(f"  文档地址: http://localhost:8000/docs")
+
+    yield
+
+    # 关闭时
+    print("🛑 Insider Hunter 关闭中...")
+
+    if listener:
+        await listener.stop()
+
+    if discovery:
+        await discovery.close()
+
+    await close_db()
+    print("✓ 已安全关闭")
+
+
+# 创建 FastAPI 应用
+app = FastAPI(
+    title="Insider Hunter",
+    description="Polymarket 政治突发事件内幕猎手 - 链上大单监控与内幕分析系统",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-def startup():
-    init_db()
+# 注册路由
+app.include_router(router)
 
 
 @app.get("/")
-def root():
-    return {"message": "Insider Hunter API", "status": "running"}
-
-
-@app.get("/api/whales/live")
-def get_live_whales(limit: int = 20, db: Session = Depends(get_db)):
-    """获取实时大单交易流"""
-    trades = db.query(Trade).filter(
-        Trade.is_whale == True
-    ).order_by(Trade.timestamp.desc()).limit(limit).all()
-
-    return {"whales": [
-        {
-            "tx_hash": t.tx_hash,
-            "market_slug": t.market_slug,
-            "maker": t.maker,
-            "side": t.side,
-            "outcome": t.outcome,
-            "amount_usd": float(t.amount_usd),
-            "timestamp": t.timestamp.isoformat() if t.timestamp else None
-        } for t in trades
-    ]}
-
-
-@app.get("/api/insider/alerts")
-def get_insider_alerts(limit: int = 20, db: Session = Depends(get_db)):
-    """获取内幕交易分析报告"""
-    alerts = db.query(InsiderAlert).filter(
-        InsiderAlert.is_insider_suspect == True
-    ).order_by(InsiderAlert.created_at.desc()).limit(limit).all()
-
-    return {"alerts": [
-        {
-            "id": a.id,
-            "trade_tx_hash": a.trade_tx_hash,
-            "market_slug": a.market_slug,
-            "related_news": a.related_news,
-            "news_time": a.news_time.isoformat() if a.news_time else None,
-            "reason": a.reason,
-            "created_at": a.created_at.isoformat() if a.created_at else None
-        } for a in alerts
-    ]}
-
-
-@app.get("/api/market/{slug}")
-def get_market_history(slug: str, db: Session = Depends(get_db)):
-    """获取市场交易历史"""
-    market = db.query(Market).filter(Market.slug == slug).first()
-    if not market:
-        return {"error": "Market not found"}
-
-    trades = db.query(Trade).filter(
-        Trade.market_slug == slug
-    ).order_by(Trade.timestamp.desc()).limit(100).all()
-
+async def root():
+    """根路径"""
     return {
-        "market": {
-            "slug": market.slug,
-            "category": market.category,
-            "active": market.active
-        },
-        "trades": [
-            {
-                "tx_hash": t.tx_hash,
-                "side": t.side,
-                "outcome": t.outcome,
-                "amount_usd": float(t.amount_usd),
-                "timestamp": t.timestamp.isoformat() if t.timestamp else None,
-                "is_whale": t.is_whale
-            } for t in trades
-        ]
+        "name": "Insider Hunter",
+        "description": "Polymarket 政治突发事件内幕猎手",
+        "version": "1.0.0",
+        "docs": "/docs",
     }
 
 
-@app.get("/api/markets")
-def get_markets(category: str = None, db: Session = Depends(get_db)):
-    """获取市场列表"""
-    query = db.query(Market).filter(Market.active == True)
-    if category:
-        query = query.filter(Market.category == category)
+# CLI 入口点
+def run_server():
+    """运行 API 服务器"""
+    import uvicorn
+    uvicorn.run(
+        "src.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+    )
 
-    markets = query.all()
-    return {"markets": [
-        {
-            "slug": m.slug,
-            "category": m.category,
-            "condition_id": m.condition_id
-        } for m in markets
-    ]}
+
+async def run_profiler_refresh():
+    """运行交易者画像刷新"""
+    await init_db()
+    profiler = TraderProfiler(AsyncSessionLocal)
+    await profiler.refresh_all_profiles()
+    await close_db()
+
+
+async def run_insider_scan():
+    """运行内幕分析扫描"""
+    await init_db()
+    analyzer = InsiderAnalyzer(AsyncSessionLocal)
+    await analyzer.scan_pending_trades(limit=10)
+    await close_db()
+
+
+async def run_history_backfill(months: int = 6):
+    """运行历史数据回填"""
+    backfill = HistoryBackfill()
+    await backfill.backfill(months=months)
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import sys
+
+    if len(sys.argv) > 1:
+        command = sys.argv[1]
+
+        if command == "serve":
+            run_server()
+        elif command == "refresh-profiles":
+            asyncio.run(run_profiler_refresh())
+        elif command == "scan-insider":
+            asyncio.run(run_insider_scan())
+        elif command == "backfill":
+            # 支持指定月数: python -m src.main backfill 6
+            months = 6
+            if len(sys.argv) > 2:
+                try:
+                    months = int(sys.argv[2])
+                except ValueError:
+                    pass
+            print(f"📊 开始回填 {months} 个月的历史数据...")
+            asyncio.run(run_history_backfill(months))
+        else:
+            print(f"未知命令: {command}")
+            print("可用命令:")
+            print("  serve            - 启动 API 服务")
+            print("  backfill [月数]   - 回填历史数据 (默认 6 个月)")
+            print("  refresh-profiles - 刷新交易者画像")
+            print("  scan-insider     - 执行内幕分析扫描")
+    else:
+        run_server()

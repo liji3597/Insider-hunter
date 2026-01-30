@@ -1,0 +1,238 @@
+"""链上监听模块 - 监听 Polymarket CTF Exchange 的交易事件"""
+import asyncio
+from datetime import datetime
+from decimal import Decimal
+from typing import Dict, Optional, Callable
+from web3 import Web3
+from web3.providers import HTTPProvider
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..config import get_settings
+from ..models import Trade, Market
+from .decoder import TradeDecoder, ORDER_FILLED_TOPIC
+
+settings = get_settings()
+
+
+class TradeListener:
+    """链上交易监听器"""
+
+    def __init__(self, session_factory):
+        """
+        初始化监听器
+
+        Args:
+            session_factory: 异步数据库会话工厂
+        """
+        self.w3 = Web3(HTTPProvider(settings.POLYGON_RPC_URL))
+        self.decoder = TradeDecoder()
+        self.session_factory = session_factory
+        self.exchange_address = Web3.to_checksum_address(settings.CTF_EXCHANGE_ADDRESS)
+        self.whale_threshold = Decimal(str(settings.WHALE_THRESHOLD))
+        self.running = False
+        self.token_map: Dict[str, Dict] = {}  # token_id -> {slug, outcome}
+        self.on_whale_callback: Optional[Callable] = None
+
+    async def refresh_token_map(self):
+        """刷新 token 到市场的映射"""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(Market).where(Market.active == True)
+            )
+            markets = result.scalars().all()
+
+            self.token_map = {}
+            for m in markets:
+                self.token_map[m.yes_token_id] = {"slug": m.slug, "outcome": "YES"}
+                self.token_map[m.no_token_id] = {"slug": m.slug, "outcome": "NO"}
+
+        print(f"已加载 {len(self.token_map)} 个 token 映射")
+
+    def set_whale_callback(self, callback: Callable):
+        """设置大单回调函数"""
+        self.on_whale_callback = callback
+
+    async def start(self, from_block: Optional[int] = None, poll_interval: int = 2):
+        """
+        开始监听链上交易
+
+        Args:
+            from_block: 起始区块，None 则从最新区块开始
+            poll_interval: 轮询间隔（秒）
+        """
+        self.running = True
+        await self.refresh_token_map()
+
+        if from_block is None:
+            from_block = self.w3.eth.block_number
+
+        current_block = from_block
+        print(f"开始监听链上交易，起始区块: {current_block}")
+
+        while self.running:
+            try:
+                latest_block = self.w3.eth.block_number
+
+                if current_block <= latest_block:
+                    # 获取事件日志
+                    logs = self.w3.eth.get_logs({
+                        "address": self.exchange_address,
+                        "topics": [ORDER_FILLED_TOPIC],
+                        "fromBlock": current_block,
+                        "toBlock": min(current_block + 100, latest_block),  # 每次最多处理 100 个区块
+                    })
+
+                    if logs:
+                        print(f"区块 {current_block} - {min(current_block + 100, latest_block)}: 发现 {len(logs)} 笔交易")
+
+                    for log in logs:
+                        await self.process_log(log)
+
+                    current_block = min(current_block + 101, latest_block + 1)
+
+                await asyncio.sleep(poll_interval)
+
+            except Exception as e:
+                print(f"监听出错: {e}")
+                await asyncio.sleep(5)  # 出错后等待 5 秒重试
+
+    async def stop(self):
+        """停止监听"""
+        self.running = False
+        print("监听器已停止")
+
+    async def process_log(self, log: Dict):
+        """
+        处理单条日志
+
+        Args:
+            log: 原始日志数据
+        """
+        # 解码交易
+        trade_data = self.decoder.decode_order_filled(log)
+        if not trade_data:
+            return
+
+        token_id = trade_data.get("token_id", "")
+
+        # 匹配市场
+        market_info = self.token_map.get(token_id)
+        if not market_info:
+            # 未知 token，可能不是我们关注的市场
+            return
+
+        market_slug = market_info["slug"]
+        outcome = market_info["outcome"]
+
+        # 计算 USD 金额
+        price = trade_data["price"]
+        size = trade_data["size"]
+        amount_usd = price * size
+
+        # 判断是否是大单
+        is_whale = amount_usd >= self.whale_threshold
+
+        # 获取区块时间戳
+        try:
+            block = self.w3.eth.get_block(trade_data["block_number"])
+            timestamp = datetime.utcfromtimestamp(block["timestamp"])
+        except Exception:
+            timestamp = datetime.utcnow()
+
+        # 存入数据库
+        await self._save_trade(
+            tx_hash=trade_data["tx_hash"],
+            log_index=trade_data["log_index"],
+            block_number=trade_data["block_number"],
+            market_slug=market_slug,
+            maker=trade_data["maker"],
+            taker=trade_data["taker"],
+            side=trade_data["side"],
+            outcome=outcome,
+            price=price,
+            size=size,
+            amount_usd=amount_usd,
+            is_whale=is_whale,
+            timestamp=timestamp,
+        )
+
+        # 大单警报
+        if is_whale:
+            print(f"🚨 巨鲸警报! {market_slug} [{outcome}]: ${amount_usd:.2f} USD ({trade_data['side']})")
+
+            if self.on_whale_callback:
+                await self.on_whale_callback({
+                    "tx_hash": trade_data["tx_hash"],
+                    "market_slug": market_slug,
+                    "outcome": outcome,
+                    "side": trade_data["side"],
+                    "amount_usd": float(amount_usd),
+                    "maker": trade_data["maker"],
+                    "timestamp": timestamp.isoformat(),
+                })
+
+    async def _save_trade(
+        self,
+        tx_hash: str,
+        log_index: int,
+        block_number: int,
+        market_slug: str,
+        maker: str,
+        taker: str,
+        side: str,
+        outcome: str,
+        price: Decimal,
+        size: Decimal,
+        amount_usd: Decimal,
+        is_whale: bool,
+        timestamp: datetime,
+    ):
+        """保存交易到数据库"""
+        async with self.session_factory() as session:
+            # 检查是否已存在（去重）
+            result = await session.execute(
+                select(Trade).where(
+                    Trade.tx_hash == tx_hash,
+                    Trade.log_index == log_index
+                )
+            )
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                return  # 已存在，跳过
+
+            trade = Trade(
+                tx_hash=tx_hash,
+                log_index=log_index,
+                block_number=block_number,
+                market_slug=market_slug,
+                maker=maker,
+                taker=taker,
+                side=side,
+                outcome=outcome,
+                price=price,
+                size=size,
+                amount_usd=amount_usd,
+                is_whale=is_whale,
+                timestamp=timestamp,
+            )
+
+            session.add(trade)
+            await session.commit()
+
+
+async def run_listener():
+    """运行监听器（独立脚本入口）"""
+    from ..db import AsyncSessionLocal, init_db
+
+    # 初始化数据库
+    await init_db()
+
+    # 创建监听器
+    listener = TradeListener(AsyncSessionLocal)
+
+    try:
+        await listener.start()
+    except KeyboardInterrupt:
+        await listener.stop()
