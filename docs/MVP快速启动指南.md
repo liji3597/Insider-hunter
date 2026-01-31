@@ -130,7 +130,7 @@ curl http://localhost:8000/api/whales/live?limit=10
 如果想获取历史数据，在新窗口运行：
 ```bash
 cd D:\RustProject\insider-hunter
-py -m src.main backfill 100000
+py -m src.main fast-backfill 100000
 ```
 这会回填最近 100000笔交易
 
