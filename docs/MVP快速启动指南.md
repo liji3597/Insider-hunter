@@ -42,11 +42,11 @@ copy .env.example .env
 DATABASE_URL=postgresql+asyncpg://hunter:hunter123@localhost:5432/polymarket_db
 
 # Polygon RPC（必须填写，下面是免费公共 RPC）
-POLYGON_RPC_URL=https://polygon-rpc.com
+POLYGON_RPC_URL=https://quiet-silent-dust.matic.quiknode.pro/09f2a70963d4428603343f329dfc288182782d66/
 
 # DeepSeek API（必须填写你的 API Key）
-DEEPSEEK_BASE_URL=https://key.jese1357.xyz/v1
-DEEPSEEK_API_KEY=sk-lb-8f4e2a9c7b1d6e3f5a0c9d8b7e6f4a2c
+DEEPSEEK_BASE_URL=https://api.siliconflow.cn/v1
+DEEPSEEK_API_KEY=sk-lglxodtvqngupqgoupgjwgzkledfzyjuxwhfhzxbfjasquqz
 DEEPSEEK_MODEL=deepseek-ai/DeepSeek-V3
 
 # 业务配置
@@ -125,14 +125,14 @@ curl http://localhost:8000/api/whales/live?limit=10
 
 ---
 
-## 第六步：回填历史数据（可选）
+## 第六步：回填历史数据
 
 如果想获取历史数据，在新窗口运行：
 ```bash
 cd D:\RustProject\insider-hunter
-py -m src.main backfill 1
+py -m src.main backfill 100000
 ```
-这会回填最近 1 个月的数据（约需 30 分钟）。
+这会回填最近 100000笔交易
 
 ---
 

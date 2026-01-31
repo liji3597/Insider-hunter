@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     POLYGON_RPC_URL: str = "https://polygon-rpc.com"
 
     # DeepSeek API
-    DEEPSEEK_BASE_URL: str = "https://key.jese1357.xyz/v1"
+    DEEPSEEK_BASE_URL: str = "https://api.siliconflow.cn/v1"
     DEEPSEEK_API_KEY: str = ""
-    DEEPSEEK_MODEL: str = "deepseekv3"
+    DEEPSEEK_MODEL: str = "deepseek-ai/DeepSeek-V3"
 
     # 业务配置
     WHALE_THRESHOLD: float = 10000.0  # 大单阈值 1万U

@@ -64,6 +64,11 @@ class TradeListener:
         self.running = True
         await self.refresh_token_map()
 
+        # 追赶模式配置
+        CATCHUP_STEP = 10  # 追赶时每次处理的区块数（减小以避免 413 错误）
+        CATCHUP_DELAY = 0.5  # 追赶时每批之间的延迟（秒）
+        MAX_CATCHUP_PER_CYCLE = 100  # 每个周期最多追赶的区块数
+
         if from_block is None:
             from_block = self.w3.eth.block_number
 
@@ -73,24 +78,40 @@ class TradeListener:
         while self.running:
             try:
                 latest_block = self.w3.eth.block_number
+                blocks_behind = latest_block - current_block
 
-                if current_block <= latest_block:
-                    # 获取事件日志
-                    logs = self.w3.eth.get_logs({
-                        "address": self.exchange_address,
-                        "topics": [ORDER_FILLED_TOPIC],
-                        "fromBlock": current_block,
-                        "toBlock": min(current_block + 100, latest_block),  # 每次最多处理 100 个区块
-                    })
+                if blocks_behind > 0:
+                    # 限制每个周期的追赶量
+                    target_block = min(current_block + MAX_CATCHUP_PER_CYCLE, latest_block)
 
-                    if logs:
-                        print(f"区块 {current_block} - {min(current_block + 100, latest_block)}: 发现 {len(logs)} 笔交易")
+                    if blocks_behind > MAX_CATCHUP_PER_CYCLE:
+                        print(f"落后 {blocks_behind} 个区块，本周期追赶到 {target_block}")
 
-                    for log in logs:
-                        await self.process_log(log)
+                    # 分批处理
+                    while current_block <= target_block and self.running:
+                        batch_end = min(current_block + CATCHUP_STEP - 1, target_block)
 
-                    current_block = min(current_block + 101, latest_block + 1)
+                        try:
+                            logs = self.w3.eth.get_logs({
+                                "address": self.exchange_address,
+                                "topics": [ORDER_FILLED_TOPIC],
+                                "fromBlock": current_block,
+                                "toBlock": batch_end,
+                            })
 
+                            if logs:
+                                print(f"区块 {current_block}-{batch_end}: {len(logs)} 笔交易")
+
+                            for log in logs:
+                                await self.process_log(log)
+
+                        except Exception as e:
+                            print(f"[WARN] 区块 {current_block}-{batch_end} 失败: {e}")
+
+                        current_block = batch_end + 1
+                        await asyncio.sleep(CATCHUP_DELAY)
+
+                # 已追上最新区块，正常轮询
                 await asyncio.sleep(poll_interval)
 
             except Exception as e:
