@@ -287,3 +287,88 @@ async def trigger_insider_analysis(
         "suspect_count": suspect_count,
         "message": f"已分析 {len(alerts)} 笔交易，发现 {suspect_count} 笔可疑交易",
     }
+
+
+# ==================== AI 交易者画像接口 ====================
+
+@router.get("/traders/ai-leaderboard")
+async def get_ai_leaderboard(
+    limit: int = Query(default=20, ge=1, le=100),
+    trader_type: Optional[str] = Query(default=None, regex="^(smart_money|dumb_money|normal)$"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取带AI分析的交易者排行榜
+
+    - **limit**: 返回数量 (1-100)
+    - **trader_type**: 交易者类型筛选 (smart_money/dumb_money/normal)
+    """
+    from ..db import AsyncSessionLocal
+    from ..profiler.ai_analyzer import TraderAIProfiler
+
+    ai_profiler = TraderAIProfiler(AsyncSessionLocal)
+    leaderboard = await ai_profiler.get_top_traders_with_ai(
+        session=db,
+        limit=limit,
+        trader_type=trader_type
+    )
+
+    return {"data": leaderboard}
+
+
+@router.post("/traders/{address}/ai-analyze")
+async def analyze_trader_ai(
+    address: str,
+    force_refresh: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    对单个交易者进行AI画像分析
+
+    - **address**: 交易者钱包地址
+    - **force_refresh**: 是否强制重新分析
+    """
+    from ..db import AsyncSessionLocal
+    from ..profiler.ai_analyzer import TraderAIProfiler
+
+    ai_profiler = TraderAIProfiler(AsyncSessionLocal)
+    result = await ai_profiler.analyze_trader(
+        session=db,
+        address=address,
+        force_refresh=force_refresh
+    )
+
+    if not result:
+        raise HTTPException(status_code=404, detail="交易者不存在或分析失败")
+
+    return result
+
+
+@router.post("/traders/batch-ai-analyze")
+async def batch_analyze_traders(
+    limit: int = Query(default=50, ge=1, le=200),
+    min_trades: int = Query(default=5, ge=1),
+    force_refresh: bool = Query(default=False),
+):
+    """
+    批量AI分析交易者
+
+    - **limit**: 分析数量 (1-200)
+    - **min_trades**: 最小交易次数
+    - **force_refresh**: 是否强制重新分析
+    """
+    from ..db import AsyncSessionLocal
+    from ..profiler.ai_analyzer import TraderAIProfiler
+
+    ai_profiler = TraderAIProfiler(AsyncSessionLocal)
+    results = await ai_profiler.batch_analyze(
+        limit=limit,
+        min_trades=min_trades,
+        force_refresh=force_refresh
+    )
+
+    return {
+        "analyzed": len(results),
+        "message": f"已完成 {len(results)} 个交易者的AI画像分析",
+        "results": results
+    }

@@ -26,40 +26,40 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global listener, discovery
 
-    # 启动时
-    print("🚀 Insider Hunter 启动中...")
+    # Startup
+    print("[STARTUP] Insider Hunter starting...")
 
-    # 初始化数据库
+    # Initialize database
     await init_db()
-    print("✓ 数据库初始化完成")
+    print("[OK] Database initialized")
 
-    # 初始化市场发现服务
+    # Initialize market discovery service
     discovery = MarketDiscovery()
 
-    # 同步市场数据
+    # Sync market data
     try:
         markets = await discovery.fetch_all_active_markets(limit=200)
         async with AsyncSessionLocal() as session:
             count = await discovery.sync_markets_to_db(session, markets)
-            print(f"✓ 同步了 {count} 个新市场，共 {len(markets)} 个活跃市场")
+            print(f"[OK] Synced {count} new markets, total {len(markets)} active markets")
     except Exception as e:
-        print(f"⚠ 市场同步失败: {e}")
+        print(f"[WARNING] Market sync failed: {e}")
 
-    # 初始化链上监听器
+    # Initialize blockchain listener
     listener = TradeListener(AsyncSessionLocal)
 
-    # 在后台启动监听器
+    # Start listener in background
     asyncio.create_task(listener.start())
-    print("✓ 链上监听器已启动")
+    print("[OK] Blockchain listener started")
 
-    print("✓ Insider Hunter 启动完成!")
-    print(f"  API 地址: http://localhost:8000")
-    print(f"  文档地址: http://localhost:8000/docs")
+    print("[OK] Insider Hunter started successfully!")
+    print(f"  API URL: http://localhost:8000")
+    print(f"  Docs URL: http://localhost:8000/docs")
 
     yield
 
-    # 关闭时
-    print("🛑 Insider Hunter 关闭中...")
+    # Shutdown
+    print("[SHUTDOWN] Insider Hunter shutting down...")
 
     if listener:
         await listener.stop()
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
         await discovery.close()
 
     await close_db()
-    print("✓ 已安全关闭")
+    print("[OK] Safely closed")
 
 
 # 创建 FastAPI 应用
@@ -131,6 +131,37 @@ async def run_insider_scan():
     await close_db()
 
 
+async def run_ai_profile_analysis(limit: int = 50, min_trades: int = 5, force: bool = False):
+    """Run AI trader profile analysis"""
+    from .profiler.ai_analyzer import TraderAIProfiler
+
+    await init_db()
+    ai_profiler = TraderAIProfiler(AsyncSessionLocal)
+
+    print(f"[AI Analysis] Starting analysis (max {limit} traders, min {min_trades} trades)")
+    if force:
+        print("[WARNING] Force refresh mode: will re-analyze traders with existing labels")
+
+    results = await ai_profiler.batch_analyze(
+        limit=limit,
+        min_trades=min_trades,
+        force_refresh=force
+    )
+
+    print(f"\n[SUCCESS] Analysis complete! Analyzed {len(results)} traders")
+
+    # Show preview of results
+    if results:
+        print("\n[PREVIEW] Analysis Results:")
+        for i, result in enumerate(results[:5], 1):
+            if not result.get('cached'):
+                print(f"\n{i}. {result['address'][:10]}...")
+                print(f"   Label: {result.get('label', 'N/A')}")
+                print(f"   Style: {result.get('trading_style', 'N/A')} | Risk: {result.get('risk_preference', 'N/A')}")
+
+    await close_db()
+
+
 async def run_history_backfill(months: int = 6):
     """运行历史数据回填"""
     backfill = HistoryBackfill()
@@ -177,6 +208,26 @@ if __name__ == "__main__":
             asyncio.run(run_profiler_refresh())
         elif command == "scan-insider":
             asyncio.run(run_insider_scan())
+        elif command == "ai-profile":
+            # 支持参数: python -m src.main ai-profile [limit] [min_trades] [--force]
+            limit = 50
+            min_trades = 5
+            force = False
+
+            if len(sys.argv) > 2:
+                try:
+                    limit = int(sys.argv[2])
+                except ValueError:
+                    pass
+            if len(sys.argv) > 3:
+                try:
+                    min_trades = int(sys.argv[3])
+                except ValueError:
+                    pass
+            if "--force" in sys.argv:
+                force = True
+
+            asyncio.run(run_ai_profile_analysis(limit, min_trades, force))
         elif command == "backfill":
             # 支持指定月数: python -m src.main backfill 6
             months = 6
@@ -185,7 +236,7 @@ if __name__ == "__main__":
                     months = int(sys.argv[2])
                 except ValueError:
                     pass
-            print(f"📊 开始回填 {months} 个月的历史数据...")
+            print(f"[BACKFILL] Starting {months} months historical data backfill...")
             asyncio.run(run_history_backfill(months))
         elif command == "sync-markets":
             asyncio.run(run_sync_markets())
@@ -197,16 +248,17 @@ if __name__ == "__main__":
                     total = int(sys.argv[2])
                 except ValueError:
                     pass
-            print(f"⚡ 快速回填 {total} 条交易 (Polymarket Data API)...")
+            print(f"[FAST BACKFILL] Loading {total} trades (Polymarket Data API)...")
             asyncio.run(run_fast_backfill(total))
         else:
             print(f"未知命令: {command}")
             print("可用命令:")
-            print("  serve              - 启动 API 服务")
-            print("  sync-markets       - 同步市场数据")
-            print("  fast-backfill [数量] - 快速回填交易 (推荐，默认 10000)")
-            print("  backfill [月数]     - 链上回填历史数据 (慢)")
-            print("  refresh-profiles   - 刷新交易者画像")
-            print("  scan-insider       - 执行内幕分析扫描")
+            print("  serve                    - 启动 API 服务")
+            print("  sync-markets             - 同步市场数据")
+            print("  fast-backfill [数量]      - 快速回填交易 (推荐，默认 10000)")
+            print("  backfill [月数]           - 链上回填历史数据 (慢)")
+            print("  refresh-profiles         - 刷新交易者画像")
+            print("  scan-insider             - 执行内幕分析扫描")
+            print("  ai-profile [数量] [最小交易数] [--force] - AI交易者画像分析")
     else:
         run_server()

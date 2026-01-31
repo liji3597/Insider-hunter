@@ -75,7 +75,13 @@ class TraderProfile(Base):
     win_rate = Column(Numeric(5, 2), default=0)  # 0.00 - 100.00
     avg_trade_size = Column(Numeric(18, 2), default=0)
     trader_type = Column(String(20))  # 'smart_money' / 'dumb_money' / 'normal'
-    label = Column(String(100))  # AI 生成的标签
+
+    # AI 分析字段
+    label = Column(String(100))  # AI 生成的标签（如：激进型政治预测专家）
+    trading_style = Column(String(50))  # 交易风格：激进/稳健/保守/投机/对冲
+    risk_preference = Column(String(20))  # 风险偏好：高/中/低
+    ai_analysis = Column(Text)  # AI 深度分析文本
+
     last_trade_at = Column(DateTime)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
