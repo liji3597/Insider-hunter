@@ -109,6 +109,9 @@ async def get_markets(
             {
                 "slug": m.slug,
                 "question": m.question,
+                "condition_id": m.condition_id,
+                "yes_token_id": m.yes_token_id,
+                "no_token_id": m.no_token_id,
                 "category": m.category,
                 "resolved": m.resolved,
                 "resolution_outcome": m.resolution_outcome,

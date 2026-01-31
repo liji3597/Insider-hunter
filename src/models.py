@@ -44,8 +44,8 @@ class Trade(Base):
     market_slug = Column(String(255), nullable=False)
     maker = Column(String(42), nullable=False)
     taker = Column(String(42))
-    side = Column(String(4), nullable=False)  # 'BUY' / 'SELL'
-    outcome = Column(String(3), nullable=False)  # 'YES' / 'NO'
+    side = Column(String(10), nullable=False)  # 'BUY' / 'SELL'
+    outcome = Column(String(50), nullable=False)  # 'YES' / 'NO' / 'Up' / 'Down' 等
     price = Column(Numeric(10, 6), nullable=False)  # 0.00 - 1.00
     size = Column(Numeric(20, 6), nullable=False)  # token 数量
     amount_usd = Column(Numeric(18, 2), nullable=False)
