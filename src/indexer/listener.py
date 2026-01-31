@@ -26,6 +26,11 @@ class TradeListener:
             session_factory: 异步数据库会话工厂
         """
         self.w3 = Web3(HTTPProvider(settings.POLYGON_RPC_URL))
+
+        # 添加 POA middleware 支持 Polygon 链
+        from web3.middleware import geth_poa_middleware
+        self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+
         self.decoder = TradeDecoder()
         self.session_factory = session_factory
         self.exchange_address = Web3.to_checksum_address(settings.CTF_EXCHANGE_ADDRESS)
@@ -47,7 +52,7 @@ class TradeListener:
                 self.token_map[m.yes_token_id] = {"slug": m.slug, "outcome": "YES"}
                 self.token_map[m.no_token_id] = {"slug": m.slug, "outcome": "NO"}
 
-        print(f"Loaded {len(self.token_map)} token mappings")
+        print(f"[OK] Loaded {len(self.token_map)} token mappings")
 
     def set_whale_callback(self, callback: Callable):
         """设置大单回调函数"""
@@ -73,7 +78,7 @@ class TradeListener:
             from_block = self.w3.eth.block_number
 
         current_block = from_block
-        print(f"Starting chain listener, from block: {current_block}")
+        print(f"[LISTENER] Starting from block: {current_block}")
 
         while self.running:
             try:
@@ -85,7 +90,7 @@ class TradeListener:
                     target_block = min(current_block + MAX_CATCHUP_PER_CYCLE, latest_block)
 
                     if blocks_behind > MAX_CATCHUP_PER_CYCLE:
-                        print(f"落后 {blocks_behind} 个区块，本周期追赶到 {target_block}")
+                        print(f"[CATCHUP] Behind {blocks_behind} blocks, catching up to {target_block}")
 
                     # 分批处理
                     while current_block <= target_block and self.running:
@@ -100,7 +105,7 @@ class TradeListener:
                             })
 
                             if logs:
-                                print(f"区块 {current_block}-{batch_end}: {len(logs)} 笔交易")
+                                print(f"[TRADES] Block {current_block}-{batch_end}: {len(logs)} trades")
 
                             for log in logs:
                                 await self.process_log(log)
@@ -115,13 +120,13 @@ class TradeListener:
                 await asyncio.sleep(poll_interval)
 
             except Exception as e:
-                print(f"监听出错: {e}")
+                print(f"[ERROR] Listener error: {e}")
                 await asyncio.sleep(5)  # 出错后等待 5 秒重试
 
     async def stop(self):
         """停止监听"""
         self.running = False
-        print("监听器已停止")
+        print("[LISTENER] Stopped")
 
     async def process_log(self, log: Dict):
         """
@@ -180,7 +185,7 @@ class TradeListener:
 
         # 大单警报
         if is_whale:
-            print(f"🚨 巨鲸警报! {market_slug} [{outcome}]: ${amount_usd:.2f} USD ({trade_data['side']})")
+            print(f"[WHALE ALERT] {market_slug} [{outcome}]: ${amount_usd:.2f} USD ({trade_data['side']})")
 
             if self.on_whale_callback:
                 await self.on_whale_callback({
