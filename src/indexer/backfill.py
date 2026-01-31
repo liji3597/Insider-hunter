@@ -72,8 +72,8 @@ class HistoryBackfill:
         from_block: Optional[int] = None,
         to_block: Optional[int] = None,
         months: int = 6,
-        batch_size: int = 2000,
-        delay: float = 0.5,
+        batch_size: int = 1,
+        delay: float = 0.2,
     ):
         """
         执行历史数据回填
@@ -92,7 +92,7 @@ class HistoryBackfill:
         await self.listener.refresh_token_map()
 
         if not self.listener.token_map:
-            print("⚠️ 没有可用的市场映射，请先同步市场数据")
+            print("[WARN] No market mapping available, please sync markets first")
             return
 
         # 确定区块范围
@@ -103,10 +103,10 @@ class HistoryBackfill:
             to_block = self.w3.eth.block_number
 
         total_blocks = to_block - from_block
-        print(f"📊 历史数据回填")
-        print(f"   区块范围: {from_block:,} - {to_block:,}")
-        print(f"   总区块数: {total_blocks:,}")
-        print(f"   预计批次: {total_blocks // batch_size + 1}")
+        print(f"[*] History Backfill")
+        print(f"    Block range: {from_block:,} - {to_block:,}")
+        print(f"    Total blocks: {total_blocks:,}")
+        print(f"    Estimated batches: {total_blocks // batch_size + 1}")
         print()
 
         processed_blocks = 0
@@ -158,13 +158,13 @@ class HistoryBackfill:
                     eta_seconds = remaining_blocks / rate if rate > 0 else 0
                     eta_str = str(timedelta(seconds=int(eta_seconds)))
                 else:
-                    eta_str = "计算中..."
+                    eta_str = "calculating..."
 
-                print(f"\r   进度: {progress:.1f}% | 区块: {current_block:,} - {batch_end:,} | "
-                      f"交易: {total_trades:,} | 大单: {whale_trades:,} | ETA: {eta_str}   ", end="")
+                print(f"\r    Progress: {progress:.1f}% | Blocks: {current_block:,} - {batch_end:,} | "
+                      f"Trades: {total_trades:,} | Whales: {whale_trades:,} | ETA: {eta_str}   ", end="")
 
             except Exception as e:
-                print(f"\n   ⚠️ 区块 {current_block} - {batch_end} 处理失败: {e}")
+                print(f"\n    [WARN] Block {current_block} - {batch_end} failed: {e}")
                 # 出错后增加延迟
                 await asyncio.sleep(delay * 2)
 
@@ -172,11 +172,11 @@ class HistoryBackfill:
             await asyncio.sleep(delay)
 
         elapsed_total = datetime.now() - start_time
-        print(f"\n\n✅ 回填完成!")
-        print(f"   总耗时: {elapsed_total}")
-        print(f"   处理区块: {processed_blocks:,}")
-        print(f"   总交易数: {total_trades:,}")
-        print(f"   大单数量: {whale_trades:,}")
+        print(f"\n\n[OK] Backfill complete!")
+        print(f"    Duration: {elapsed_total}")
+        print(f"    Blocks processed: {processed_blocks:,}")
+        print(f"    Total trades: {total_trades:,}")
+        print(f"    Whale trades: {whale_trades:,}")
 
         await close_db()
 
@@ -197,5 +197,5 @@ if __name__ == "__main__":
         except ValueError:
             pass
 
-    print(f"开始回填 {months} 个月的历史数据...")
+    print(f"Starting backfill for {months} months...")
     asyncio.run(run_backfill(months=months))

@@ -1,4 +1,5 @@
 """市场发现模块 - 从 Gamma API 获取 Polymarket 市场数据"""
+import json
 import httpx
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -62,9 +63,17 @@ class MarketDiscovery:
                 if not is_politics:
                     continue
 
-                # 确保有 token IDs
-                clob_token_ids = m.get("clobTokenIds", [])
-                if len(clob_token_ids) < 2:
+                # 解析 clobTokenIds (可能是 JSON 字符串或列表)
+                clob_token_ids_raw = m.get("clobTokenIds", "[]")
+                if isinstance(clob_token_ids_raw, str):
+                    try:
+                        clob_token_ids = json.loads(clob_token_ids_raw)
+                    except json.JSONDecodeError:
+                        clob_token_ids = []
+                else:
+                    clob_token_ids = clob_token_ids_raw
+
+                if not isinstance(clob_token_ids, list) or len(clob_token_ids) < 2:
                     continue
 
                 markets.append({
@@ -109,8 +118,17 @@ class MarketDiscovery:
 
             markets = []
             for m in data:
-                clob_token_ids = m.get("clobTokenIds", [])
-                if len(clob_token_ids) < 2:
+                # 解析 clobTokenIds (可能是 JSON 字符串或列表)
+                clob_token_ids_raw = m.get("clobTokenIds", "[]")
+                if isinstance(clob_token_ids_raw, str):
+                    try:
+                        clob_token_ids = json.loads(clob_token_ids_raw)
+                    except json.JSONDecodeError:
+                        clob_token_ids = []
+                else:
+                    clob_token_ids = clob_token_ids_raw
+
+                if not isinstance(clob_token_ids, list) or len(clob_token_ids) < 2:
                     continue
 
                 markets.append({

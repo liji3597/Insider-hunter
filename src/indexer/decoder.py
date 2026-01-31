@@ -1,6 +1,7 @@
 """交易解码模块 - 解析 Polymarket CTF Exchange 的 OrderFilled 事件"""
+from __future__ import annotations
 from decimal import Decimal
-from typing import Dict, Optional
+from typing import Dict, Optional, Union, Tuple
 from web3 import Web3
 from eth_abi import decode
 

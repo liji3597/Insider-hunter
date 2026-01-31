@@ -47,7 +47,7 @@ class TradeListener:
                 self.token_map[m.yes_token_id] = {"slug": m.slug, "outcome": "YES"}
                 self.token_map[m.no_token_id] = {"slug": m.slug, "outcome": "NO"}
 
-        print(f"已加载 {len(self.token_map)} 个 token 映射")
+        print(f"Loaded {len(self.token_map)} token mappings")
 
     def set_whale_callback(self, callback: Callable):
         """设置大单回调函数"""
@@ -68,7 +68,7 @@ class TradeListener:
             from_block = self.w3.eth.block_number
 
         current_block = from_block
-        print(f"开始监听链上交易，起始区块: {current_block}")
+        print(f"Starting chain listener, from block: {current_block}")
 
         while self.running:
             try:
