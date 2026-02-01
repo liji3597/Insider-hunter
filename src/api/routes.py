@@ -146,6 +146,7 @@ async def get_market_detail(
     ## 返回内容
     - 市场基本信息（问题、token ID、结算状态等）
     - 交易统计（总交易数、总交易量、大单数）
+    - YES/NO 当前价格（基于最近交易）
     - 最近10笔交易记录
     """
     result = await db.execute(
@@ -175,6 +176,26 @@ async def get_market_detail(
     )
     recent_trades = recent_trades_result.scalars().all()
 
+    # 计算 YES/NO 价格（从最近交易中提取）
+    yes_price = 0.5  # 默认值
+    no_price = 0.5   # 默认值
+
+    # 获取最近的 YES 和 NO 交易价格
+    for trade in recent_trades:
+        if trade.outcome == 'YES' and trade.price and yes_price == 0.5:
+            yes_price = float(trade.price)
+        elif trade.outcome == 'NO' and trade.price and no_price == 0.5:
+            no_price = float(trade.price)
+        # 如果两个价格都找到了，退出循环
+        if yes_price != 0.5 and no_price != 0.5:
+            break
+
+    # 如果只找到一个价格，用 1-price 计算另一个
+    if yes_price != 0.5 and no_price == 0.5:
+        no_price = 1.0 - yes_price
+    elif no_price != 0.5 and yes_price == 0.5:
+        yes_price = 1.0 - no_price
+
     return {
         "slug": market.slug,
         "question": market.question,
@@ -185,6 +206,8 @@ async def get_market_detail(
         "resolved": market.resolved,
         "resolution_outcome": market.resolution_outcome,
         "active": market.active,
+        "yes_price": yes_price,
+        "no_price": no_price,
         "stats": {
             "trade_count": stats.trade_count or 0,
             "total_volume": float(stats.total_volume) if stats.total_volume else 0,
@@ -196,6 +219,7 @@ async def get_market_detail(
                 "maker": t.maker,
                 "side": t.side,
                 "outcome": t.outcome,
+                "price": float(t.price) if t.price else None,
                 "amount_usd": float(t.amount_usd),
                 "timestamp": t.timestamp.isoformat(),
             }
