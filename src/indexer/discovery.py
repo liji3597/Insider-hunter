@@ -15,9 +15,150 @@ settings = get_settings()
 class MarketDiscovery:
     """市场发现服务"""
 
+    # 允许的政治类 category（来自 Polymarket 官方分类）
+    POLITICS_CATEGORIES = [
+        "politics",
+        "political",
+        "us-current-affairs",
+        "us politics",
+        "world politics",
+        "elections",
+        "government",
+    ]
+
+    # 排除的非政治类 category
+    EXCLUDED_CATEGORIES = [
+        "sports",
+        "nfl",
+        "nba",
+        "mlb",
+        "soccer",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "tennis",
+        "golf",
+        "mma",
+        "ufc",
+        "boxing",
+        "esports",
+        "gaming",
+        "crypto",
+        "cryptocurrency",
+        "bitcoin",
+        "ethereum",
+        "defi",
+        "nft",
+        "tech",
+        "technology",
+        "entertainment",
+        "movies",
+        "music",
+        "tv",
+        "celebrity",
+        "science",
+        "weather",
+        "finance",
+        "stocks",
+        "business",
+    ]
+
+    # 地缘政治关键词
+    GEOPOLITICS_KEYWORDS = [
+        # 军事冲突
+        "war", "conflict", "military", "invasion", "attack", "strike",
+        "missile", "nuclear", "weapon", "troops", "army", "nato",
+        # 国际关系
+        "china", "russia", "ukraine", "taiwan", "israel", "palestine",
+        "gaza", "iran", "north korea", "syria", "afghanistan",
+        # 地缘事件
+        "ceasefire", "peace deal", "sanctions", "embargo", "treaty",
+        "territorial", "border", "annexation", "occupation",
+        # 中文关键词
+        "战争", "冲突", "军事", "入侵", "导弹", "核",
+        "乌克兰", "台湾", "以色列", "巴勒斯坦", "伊朗", "朝鲜",
+    ]
+
+    # 国际政治关键词 (选举、政策等)
+    POLITICS_KEYWORDS = [
+        # 选举
+        "election", "vote", "poll", "primary", "nominee", "candidate",
+        "president", "prime minister", "governor", "senator", "congress",
+        # 政党
+        "republican", "democrat", "conservative", "labour", "party",
+        # 政策
+        "policy", "legislation", "bill", "act", "reform", "tax",
+        "impeachment", "resignation", "approval rating",
+        # 中文关键词
+        "选举", "投票", "总统", "首相", "议会", "政党",
+    ]
+
     def __init__(self):
         self.base_url = settings.GAMMA_API_URL
         self.client = httpx.AsyncClient(timeout=30.0)
+
+    def _is_politics_market(self, category: str, tags: list, question: str) -> bool:
+        """
+        判断是否为政治类市场
+
+        Args:
+            category: Polymarket 官方分类
+            tags: 标签列表
+            question: 市场问题
+
+        Returns:
+            是否为政治类市场
+        """
+        category_lower = category.lower() if category else ""
+        question_lower = question.lower() if question else ""
+        tags_text = " ".join(tags).lower()
+
+        # 1. 首先检查是否在排除列表中（体育、加密货币等）
+        for excluded in self.EXCLUDED_CATEGORIES:
+            if excluded in category_lower:
+                return False
+            # 也检查问题中是否包含体育相关词汇
+            if excluded in ["nfl", "nba", "mlb", "ufc", "mma"] and excluded in question_lower:
+                return False
+
+        # 2. 检查 category 是否为政治类
+        for politics_cat in self.POLITICS_CATEGORIES:
+            if politics_cat in category_lower:
+                return True
+
+        # 3. 检查 tags 中是否包含政治关键词
+        for keyword in ["politics", "political", "election", "government"]:
+            if keyword in tags_text:
+                return True
+
+        # 4. 检查问题内容是否包含政治关键词（作为后备）
+        for keyword in self.POLITICS_KEYWORDS + self.GEOPOLITICS_KEYWORDS:
+            if keyword in question_lower:
+                return True
+
+        return False
+
+    def _classify_politics_category(self, question: str, tags: list) -> str:
+        """
+        根据问题内容和标签分类市场
+
+        Args:
+            question: 市场问题（小写）
+            tags: 标签列表（小写）
+
+        Returns:
+            "地缘政治" 或 "国际政治"
+        """
+        text = question + " " + " ".join(tags)
+
+        # 检查是否包含地缘政治关键词
+        for keyword in self.GEOPOLITICS_KEYWORDS:
+            if keyword in text:
+                return "地缘政治"
+
+        # 默认归类为国际政治
+        return "国际政治"
 
     async def close(self):
         """关闭 HTTP 客户端"""
@@ -50,17 +191,14 @@ class MarketDiscovery:
 
             markets = []
             for m in data:
-                # 筛选政治类市场 (通过 tags 或 category)
+                # 获取 category 和 tags
+                category = m.get("category", "")
                 tags = m.get("tags", [])
                 tag_names = [t.get("label", "").lower() if isinstance(t, dict) else str(t).lower() for t in tags]
+                question = m.get("question", "")
 
-                # 检查是否是政治类
-                is_politics = any(
-                    keyword in tag_names or keyword in m.get("category", "").lower()
-                    for keyword in ["politics", "political", "election", "government"]
-                )
-
-                if not is_politics:
+                # 使用新的筛选函数判断是否为政治类市场
+                if not self._is_politics_market(category, tag_names, question):
                     continue
 
                 # 解析 clobTokenIds (可能是 JSON 字符串或列表)
@@ -76,13 +214,17 @@ class MarketDiscovery:
                 if not isinstance(clob_token_ids, list) or len(clob_token_ids) < 2:
                     continue
 
+                # 根据内容区分 国际政治 vs 地缘政治
+                question_lower = question.lower()
+                market_category = self._classify_politics_category(question_lower, tag_names)
+
                 markets.append({
                     "slug": m.get("slug", ""),
                     "condition_id": m.get("conditionId", ""),
                     "yes_token_id": clob_token_ids[0],
                     "no_token_id": clob_token_ids[1],
-                    "category": "Politics",
-                    "question": m.get("question", ""),
+                    "category": market_category,
+                    "question": question,
                     "active": m.get("active", True),
                 })
 

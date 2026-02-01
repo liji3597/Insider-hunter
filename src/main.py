@@ -36,12 +36,12 @@ async def lifespan(app: FastAPI):
     # Initialize market discovery service
     discovery = MarketDiscovery()
 
-    # Sync market data
+    # Sync market data - 只同步政治类市场
     try:
-        markets = await discovery.fetch_all_active_markets(limit=200)
+        markets = await discovery.fetch_politics_markets(limit=200)
         async with AsyncSessionLocal() as session:
             count = await discovery.sync_markets_to_db(session, markets)
-            print(f"[OK] Synced {count} new markets, total {len(markets)} active markets")
+            print(f"[OK] Synced {count} new markets, total {len(markets)} politics markets")
     except Exception as e:
         print(f"[WARNING] Market sync failed: {e}")
 
@@ -169,12 +169,12 @@ async def run_history_backfill(months: int = 6):
 
 
 async def run_sync_markets():
-    """同步市场数据"""
+    """同步市场数据 - 只同步政治类市场"""
     await init_db()
     discovery = MarketDiscovery()
     try:
-        markets = await discovery.fetch_all_active_markets(limit=200)
-        print(f"[*] 从 Gamma API 获取了 {len(markets)} 个市场")
+        markets = await discovery.fetch_politics_markets(limit=200)
+        print(f"[*] 从 Gamma API 获取了 {len(markets)} 个政治类市场")
 
         # 打印前几个市场的 token ID 用于验证
         for m in markets[:3]:
